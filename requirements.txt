@@ -2,3 +2,4 @@ flask==3.0.0
 openai==0.28.1
 python-dotenv==1.0.0
 gunicorn==21.2.0
+ShopifyAPI==12.4.0
