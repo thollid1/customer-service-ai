@@ -36,10 +36,24 @@ def get_gmail_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Get credentials from environment variable
+            creds_json = os.getenv('GOOGLE_CREDENTIALS')
+            if not creds_json:
+                raise ValueError("Google credentials not found in environment variables")
+            
+            # Write credentials temporarily to file
+            with open('temp_client_secrets.json', 'w') as f:
+                f.write(creds_json)
+            
             flow = InstalledAppFlow.from_client_secrets_file(
-                'client_secrets.json', SCOPES)
+                'temp_client_secrets.json', SCOPES)
             creds = flow.run_local_server(port=0)
+            
+            # Clean up temporary file
+            os.remove('temp_client_secrets.json')
         
+        # Save the credentials for future use
+        os.makedirs('.credentials', exist_ok=True)
         with open('.credentials/token.pickle', 'wb') as token:
             pickle.dump(creds, token)
     
@@ -81,8 +95,12 @@ def get_order_details(order):
     details = {
         'order_number': order.name,
         'status': order.fulfillment_status or 'unfulfilled',
+        'created_at': order.created_at,
         'items': [],
-        'tracking_info': None
+        'tracking_info': None,
+        'shipping_address': {},
+        'total_price': str(order.total_price),
+        'financial_status': order.financial_status
     }
     
     # Add line items
@@ -90,8 +108,20 @@ def get_order_details(order):
         details['items'].append({
             'title': item.title,
             'quantity': item.quantity,
-            'variant_title': item.variant_title
+            'variant_title': item.variant_title,
+            'sku': item.sku
         })
+    
+    # Add shipping address if available
+    if order.shipping_address:
+        details['shipping_address'] = {
+            'address1': order.shipping_address.address1,
+            'address2': order.shipping_address.address2,
+            'city': order.shipping_address.city,
+            'province': order.shipping_address.province,
+            'zip': order.shipping_address.zip,
+            'country': order.shipping_address.country
+        }
     
     # Add tracking if available
     if order.fulfillments:
@@ -114,10 +144,13 @@ def generate_response(customer_email, message_text, order_details=None):
     - We're actively working to improve shipping times
     - Be friendly, professional, and understanding
     - Always include specific order details when available
+    - If tracking is available, always include tracking number and carrier
     - Sign off with 'Best regards, Y'all Need Jesus Co. Customer Care'"""
     
     if order_details:
         system_prompt += f"\n\nOrder Details:\n{json.dumps(order_details, indent=2)}"
+    else:
+        system_prompt += "\n\nNo order found for this customer. Ask for order number or email used for purchase."
     
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
@@ -137,6 +170,8 @@ def process_email():
         message_text = data.get('message')
         subject = data.get('subject')
         
+        print(f"Processing email from: {customer_email}")  # Debug log
+        
         # Look for order number in message
         import re
         order_number_match = re.search(r'#(\d+)', message_text)
@@ -144,11 +179,13 @@ def process_email():
         
         if order_number_match:
             # Try to find order by number
+            print(f"Found order number: {order_number_match.group(1)}")  # Debug log
             order = get_order_by_number(order_number_match.group(1))
             if order:
                 order_details = get_order_details(order)
         else:
             # Try to find order by email
+            print(f"Searching by email: {customer_email}")  # Debug log
             order = get_order_by_email(customer_email)
             if order:
                 order_details = get_order_details(order)
