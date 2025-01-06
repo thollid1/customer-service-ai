@@ -209,5 +209,19 @@ def test():
     """Test endpoint to verify the service is running."""
     return jsonify({"status": "healthy"})
 
+@app.route('/test-order', methods=['GET'])
+def test_order():
+    """Test endpoint to verify Shopify integration."""
+    try:
+        # Try to get order #3239
+        order = get_order_by_number('3239')
+        if order:
+            details = get_order_details(order)
+            return jsonify({"status": "success", "order_details": details})
+        else:
+            return jsonify({"status": "error", "message": "Order not found"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
