@@ -40,10 +40,11 @@ HTML_TEMPLATE = """
     <div id="response"></div>
 
     <script>
-        async function sendEmail() {
-            const emailBody = document.getElementById('emailBody').value;
-            const orderId = document.getElementById('orderId').value;
-            
+    async function sendEmail() {
+        const emailBody = document.getElementById('emailBody').value;
+        const orderId = document.getElementById('orderId').value;
+        
+        try {
             const response = await fetch('/process-email', {
                 method: 'POST',
                 headers: {
@@ -56,9 +57,16 @@ HTML_TEMPLATE = """
             });
             
             const data = await response.json();
-            document.getElementById('response').innerText = data.response;
+            if (data.error) {
+                document.getElementById('response').innerText = "Error: " + data.error;
+            } else {
+                document.getElementById('response').innerText = data.response || "No response generated";
+            }
+        } catch (error) {
+            document.getElementById('response').innerText = "Error: " + error.message;
         }
-    </script>
+    }
+</script>
 </body>
 </html>
 """
