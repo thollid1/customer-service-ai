@@ -1,12 +1,18 @@
-from flask import Flask, request, jsonify, render_template_string
-import openai
 import os
-from dotenv import load_dotenv
+import pickle
+import base64
+import json
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+import openai
 import shopify
+from flask import Flask, request, jsonify
+from email.mime.text import MIMEText
 from datetime import datetime
 
 app = Flask(__name__)
-load_dotenv()
 
 # Initialize OpenAI and Shopify
 openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -15,181 +21,156 @@ shopify.Session.setup(api_key=os.getenv('SHOPIFY_ACCESS_TOKEN'))
 session = shopify.Session(shop_url, '2023-01', os.getenv('SHOPIFY_ACCESS_TOKEN'))
 shopify.ShopifyResource.activate_session(session)
 
-def get_detailed_order_info(order_id):
-    try:
-        print(f"Fetching order: {order_id}")  # Debug log
-        order = shopify.Order.find(order_id)
-        print(f"Found order: {order.name}")  # Debug log
+# Gmail API setup
+SCOPES = ['https://www.googleapis.com/auth/gmail.modify',
+          'https://www.googleapis.com/auth/gmail.send']
+
+def get_gmail_service():
+    """Get or refresh Gmail credentials."""
+    creds = None
+    if os.path.exists('.credentials/token.pickle'):
+        with open('.credentials/token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'client_secrets.json', SCOPES)
+            creds = flow.run_local_server(port=0)
         
-        # Basic Order Info
-        order_info = {
-            'order_number': order.name,
-            'email': order.email,
-            'order_date': order.created_at,
-            'fulfillment_status': order.fulfillment_status or 'unfulfilled',
-            'financial_status': order.financial_status,
-            'items': [],
-            'tracking': []
-        }
+        with open('.credentials/token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+    
+    return build('gmail', 'v1', credentials=creds)
 
-        # Line Items
-        for item in order.line_items:
-            order_info['items'].append({
-                'title': item.title,
-                'quantity': item.quantity,
-                'sku': item.sku,
-                'price': str(item.price)
-            })
-
-        # Tracking Information
-        if order.fulfillments:
-            print(f"Found fulfillments: {len(order.fulfillments)}")  # Debug log
-            for fulfillment in order.fulfillments:
-                if fulfillment.tracking_number:
-                    order_info['tracking'].append({
-                        'number': fulfillment.tracking_number,
-                        'url': fulfillment.tracking_url,
-                        'carrier': fulfillment.tracking_company
-                    })
-                    print(f"Added tracking: {fulfillment.tracking_number}")  # Debug log
-
-        return order_info
+def get_order_by_email(email):
+    """Search for orders by customer email."""
+    try:
+        orders = shopify.Order.find(email=email)
+        if orders:
+            return orders[0]  # Return most recent order
+        return None
     except Exception as e:
-        print(f"Error fetching order details: {e}")
+        print(f"Error finding order by email: {e}")
         return None
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Customer Service Email Tester</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; }
-        textarea { width: 100%; height: 150px; margin: 10px 0; }
-        input { width: 100%; margin: 10px 0; padding: 8px; }
-        button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
-        #response { margin-top: 20px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; }
-        .error { color: #dc3545; }
-        label { display: block; margin-top: 10px; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <h1>Customer Service Email Tester</h1>
-    <div>
-        <label>Order Number:</label>
-        <input type="text" id="orderId" placeholder="Enter order number (e.g., 3239)">
-        
-        <label>Customer Email:</label>
-        <textarea id="emailBody" placeholder="Enter customer email..."></textarea>
-        <button onclick="sendEmail()">Test Response</button>
-    </div>
-    <div id="response"></div>
+def get_order_by_number(order_number):
+    """Get order by order number."""
+    try:
+        order = shopify.Order.find(order_number)
+        return order
+    except Exception as e:
+        print(f"Error finding order by number: {e}")
+        return None
 
-    <script>
-        async function sendEmail() {
-            try {
-                const emailBody = document.getElementById('emailBody').value;
-                const orderId = document.getElementById('orderId').value;
-                
-                if (!emailBody.trim()) {
-                    document.getElementById('response').innerHTML = '<span class="error">Please enter an email message</span>';
-                    return;
-                }
-                
-                document.getElementById('response').innerText = 'Processing...';
-                
-                const response = await fetch('/process-email', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email_body: emailBody,
-                        order_id: orderId
-                    }),
-                });
-                
-                const data = await response.json();
-                if (data.error) {
-                    document.getElementById('response').innerHTML = '<span class="error">Error: ' + data.error + '</span>';
-                } else {
-                    document.getElementById('response').innerText = data.response;
-                }
-            } catch (error) {
-                document.getElementById('response').innerHTML = '<span class="error">Error: ' + error.message + '</span>';
+def create_email_response(to_email, subject, message_body):
+    """Create email message."""
+    message = MIMEText(message_body)
+    message['to'] = to_email
+    message['from'] = 'support@yallneedjesus.co'
+    message['subject'] = f"Re: {subject}"
+    return {'raw': base64.urlsafe_b64encode(message.as_bytes()).decode()}
+
+def get_order_details(order):
+    """Extract relevant order details."""
+    if not order:
+        return None
+    
+    details = {
+        'order_number': order.name,
+        'status': order.fulfillment_status or 'unfulfilled',
+        'items': [],
+        'tracking_info': None
+    }
+    
+    # Add line items
+    for item in order.line_items:
+        details['items'].append({
+            'title': item.title,
+            'quantity': item.quantity,
+            'variant_title': item.variant_title
+        })
+    
+    # Add tracking if available
+    if order.fulfillments:
+        latest_fulfillment = order.fulfillments[0]
+        if latest_fulfillment.tracking_number:
+            details['tracking_info'] = {
+                'number': latest_fulfillment.tracking_number,
+                'company': latest_fulfillment.tracking_company,
+                'url': latest_fulfillment.tracking_url
             }
-        }
-    </script>
-</body>
-</html>
-"""
+    
+    return details
 
-@app.route('/')
-def home():
-    return render_template_string(HTML_TEMPLATE)
+def generate_response(customer_email, message_text, order_details=None):
+    """Generate appropriate response using OpenAI."""
+    system_prompt = """You are a customer service representative for Y'all Need Jesus Co.
+    Key Information:
+    - We're a small business with high demand
+    - Pre-orders take 13-18 business days (19-25 calendar days)
+    - We're actively working to improve shipping times
+    - Be friendly, professional, and understanding
+    - Always include specific order details when available
+    - Sign off with 'Best regards, Y'all Need Jesus Co. Customer Care'"""
+    
+    if order_details:
+        system_prompt += f"\n\nOrder Details:\n{json.dumps(order_details, indent=2)}"
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message_text}
+        ]
+    )
+    
+    return response.choices[0].message['content']
 
 @app.route('/process-email', methods=['POST'])
 def process_email():
     try:
         data = request.json
-        order_info = None
+        customer_email = data.get('from')
+        message_text = data.get('message')
+        subject = data.get('subject')
         
-        if not data or 'email_body' not in data:
-            return jsonify({"error": "Please provide an email message."}), 400
+        # Look for order number in message
+        import re
+        order_number_match = re.search(r'#(\d+)', message_text)
+        order_details = None
         
-        # Fetch order details if order ID is provided
-        if data.get('order_id'):
-            print(f"Fetching order details for: {data['order_id']}")  # Debug log
-            order_info = get_detailed_order_info(data['order_id'])
-            print(f"Order info retrieved: {order_info}")  # Debug log
-
-        # Construct the system prompt
-        system_prompt = """You are a helpful customer service representative for Y'all Need Jesus Co.
-            Key Information:
-            - We're a small business with high demand
-            - Pre-orders take 13-18 business days (19-25 calendar days)
-            - We're actively working to improve shipping times
-            - Be friendly, professional, and understanding
-            - Always include tracking information if available
-            - Sign off with 'Best regards, Y'all Need Jesus Co. Customer Care'
-            """
-
-        # Add order details to the prompt if available
-        if order_info:
-            system_prompt += "\nOrder Details:\n"
-            system_prompt += f"Order Number: {order_info['order_number']}\n"
-            system_prompt += f"Status: {order_info['fulfillment_status']}\n"
-            
-            if order_info['tracking']:
-                tracking = order_info['tracking'][0]  # Get first tracking info
-                system_prompt += f"Tracking Number: {tracking['number']}\n"
-                system_prompt += f"Carrier: {tracking['carrier']}\n"
-                system_prompt += f"Tracking URL: {tracking['url']}\n"
-            
-            print(f"Final system prompt: {system_prompt}")  # Debug log
-
-        # Generate response using OpenAI
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": data['email_body']
-                }
-            ]
-        )
+        if order_number_match:
+            # Try to find order by number
+            order = get_order_by_number(order_number_match.group(1))
+            if order:
+                order_details = get_order_details(order)
+        else:
+            # Try to find order by email
+            order = get_order_by_email(customer_email)
+            if order:
+                order_details = get_order_details(order)
         
-        return jsonify({
-            "response": response.choices[0].message['content']
-        })
+        # Generate response
+        response_text = generate_response(customer_email, message_text, order_details)
+        
+        # Create and send email
+        service = get_gmail_service()
+        email_message = create_email_response(customer_email, subject, response_text)
+        service.users().messages().send(userId='me', body=email_message).execute()
+        
+        return jsonify({"status": "success", "response": response_text})
         
     except Exception as e:
-        print(f"Error: {str(e)}")
-        return jsonify({"error": f"Error processing request: {str(e)}"}), 500
+        print(f"Error processing email: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/test', methods=['GET'])
+def test():
+    """Test endpoint to verify the service is running."""
+    return jsonify({"status": "healthy"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
