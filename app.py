@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 import openai
 import shopify
 import os
@@ -13,8 +13,58 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 shop_url = os.getenv('SHOPIFY_SHOP_URL')
 access_token = os.getenv('SHOPIFY_ACCESS_TOKEN')
 
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Customer Service Email Tester</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; }
+        textarea { width: 100%; height: 150px; margin: 10px 0; }
+        input[type="text"] { width: 100%; margin: 10px 0; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
+        #response { margin-top: 20px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Customer Service Email Tester</h1>
+    <div>
+        <label>Order ID (optional):</label>
+        <input type="text" id="orderId" placeholder="Enter order ID...">
+        
+        <label>Customer Email:</label>
+        <textarea id="emailBody" placeholder="Enter customer email..."></textarea>
+        
+        <button onclick="sendEmail()">Test Response</button>
+    </div>
+    <div id="response"></div>
+
+    <script>
+        async function sendEmail() {
+            const emailBody = document.getElementById('emailBody').value;
+            const orderId = document.getElementById('orderId').value;
+            
+            const response = await fetch('/process-email', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email_body: emailBody,
+                    order_id: orderId
+                }),
+            });
+            
+            const data = await response.json();
+            document.getElementById('response').innerText = data.response;
+        }
+    </script>
+</body>
+</html>
+"""
+
 PRE_ORDER_MESSAGE = """
-Our pre-orders typically ship within 13-18 business days. As a small business with high demand, we're working every day to improve our shipping times. We appreciate your patience and support!
+Our pre-orders typically ship within 13-18 business days (19-25 calendar days). As a small business with high demand, we're working every day to improve our shipping times. We appreciate your patience and support!
 
 Your order will be shipped as soon as possible within this timeframe. You'll receive a shipping confirmation email with tracking details once your order ships.
 """
@@ -28,6 +78,10 @@ def calculate_expected_delivery(order_date):
     max_date = order_date + timedelta(days=max_days)
     
     return min_date.strftime('%B %d'), max_date.strftime('%B %d')
+
+@app.route('/')
+def home():
+    return render_template_string(HTML_TEMPLATE)
 
 @app.route('/health', methods=['GET'])
 def health_check():
