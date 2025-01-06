@@ -83,7 +83,7 @@ def process_email():
         print("Processing email:", data['email_body'])  # Debug log
         
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
