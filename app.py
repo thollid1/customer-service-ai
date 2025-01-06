@@ -14,6 +14,10 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+# Debug print of environment variables
+print("SHOPIFY_SHOP_URL:", os.getenv('SHOPIFY_SHOP_URL'))
+print("Has access token:", bool(os.getenv('SHOPIFY_ACCESS_TOKEN')))
+
 # Initialize OpenAI and Shopify
 openai.api_key = os.getenv('OPENAI_API_KEY')
 shop_url = os.getenv('SHOPIFY_SHOP_URL')
@@ -73,7 +77,9 @@ def get_order_by_email(email):
 def get_order_by_number(order_number):
     """Get order by order number."""
     try:
+        print(f"Attempting to find order: {order_number}")  # Debug log
         order = shopify.Order.find(order_number)
+        print(f"Order found: {order.id if order else 'None'}")  # Debug log
         return order
     except Exception as e:
         print(f"Error finding order by number: {e}")
@@ -213,15 +219,37 @@ def test():
 def test_order():
     """Test endpoint to verify Shopify integration."""
     try:
+        # Debug information
+        print("Testing Shopify connection...")
+        print("Shop URL:", os.getenv('SHOPIFY_SHOP_URL'))
+        print("Access Token (first 5 chars):", os.getenv('SHOPIFY_ACCESS_TOKEN')[:5] if os.getenv('SHOPIFY_ACCESS_TOKEN') else "None")
+        
+        # Test Shopify connection
+        shop = shopify.Shop.current()
+        print("Successfully connected to shop:", shop.name)
+        
         # Try to get order #3239
         order = get_order_by_number('3239')
         if order:
             details = get_order_details(order)
-            return jsonify({"status": "success", "order_details": details})
+            return jsonify({
+                "status": "success", 
+                "order_details": details,
+                "shop_name": shop.name
+            })
         else:
-            return jsonify({"status": "error", "message": "Order not found"})
+            return jsonify({
+                "status": "error", 
+                "message": "Order not found",
+                "shop_name": shop.name,
+                "shop_url": os.getenv('SHOPIFY_SHOP_URL')
+            })
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+        return jsonify({
+            "status": "error", 
+            "message": str(e),
+            "shop_url": os.getenv('SHOPIFY_SHOP_URL')
+        })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
