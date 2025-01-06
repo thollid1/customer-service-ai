@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
-from openai import OpenAI
+import openai
 import os
 from dotenv import load_dotenv
 
@@ -7,7 +7,7 @@ app = Flask(__name__)
 load_dotenv()
 
 # Initialize OpenAI
-client = OpenAI()
+openai.api_key = os.getenv('OPENAI_API_KEY')
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -82,7 +82,7 @@ def process_email():
             
         print("Processing email:", data['email_body'])  # Debug log
         
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
                 {
@@ -104,7 +104,7 @@ def process_email():
         )
         
         return jsonify({
-            "response": response.choices[0].message.content
+            "response": response.choices[0].message['content']
         })
         
     except Exception as e:
