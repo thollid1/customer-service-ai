@@ -7,7 +7,7 @@ app = Flask(__name__)
 load_dotenv()
 
 # Initialize OpenAI
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+client = OpenAI()
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -18,7 +18,9 @@ HTML_TEMPLATE = """
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; }
         textarea { width: 100%; height: 150px; margin: 10px 0; }
         button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
-        #response { margin-top: 20px; white-space: pre-wrap; }
+        #response { margin-top: 20px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; }
+        .error { color: #dc3545; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -34,6 +36,12 @@ HTML_TEMPLATE = """
         async function sendEmail() {
             try {
                 const emailBody = document.getElementById('emailBody').value;
+                if (!emailBody.trim()) {
+                    document.getElementById('response').innerHTML = '<span class="error">Please enter an email message</span>';
+                    return;
+                }
+                
+                document.getElementById('response').innerText = 'Processing...';
                 
                 const response = await fetch('/process-email', {
                     method: 'POST',
@@ -46,9 +54,13 @@ HTML_TEMPLATE = """
                 });
                 
                 const data = await response.json();
-                document.getElementById('response').innerText = data.response || data.error;
+                if (data.error) {
+                    document.getElementById('response').innerHTML = '<span class="error">Error: ' + data.error + '</span>';
+                } else {
+                    document.getElementById('response').innerText = data.response;
+                }
             } catch (error) {
-                document.getElementById('response').innerText = "Error: " + error.message;
+                document.getElementById('response').innerHTML = '<span class="error">Error: ' + error.message + '</span>';
             }
         }
     </script>
@@ -67,15 +79,22 @@ def process_email():
         
         if not data or 'email_body' not in data:
             return jsonify({"error": "Please provide an email message."}), 400
+            
+        print("Processing email:", data['email_body'])  # Debug log
         
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {
                     "role": "system",
-                    "content": """You are a helpful customer service representative for a small business.
-                    Pre-orders take 13-18 business days (19-25 calendar days).
-                    Be friendly and understanding."""
+                    "content": """You are a helpful customer service representative for Y'all Need Jesus Co.
+                    Key Information:
+                    - We're a small business with high demand
+                    - Pre-orders take 13-18 business days (19-25 calendar days)
+                    - We're actively working to improve shipping times
+                    - Be friendly, professional, and understanding
+                    - If it's a pre-order question, always include shipping timeframe
+                    - Sign off with 'Best regards, Y'all Need Jesus Co. Customer Care'"""
                 },
                 {
                     "role": "user",
