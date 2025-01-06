@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
-import openai
+from openai import OpenAI
 import shopify
 import os
 from dotenv import load_dotenv
@@ -9,7 +9,7 @@ app = Flask(__name__)
 load_dotenv()
 
 # Initialize OpenAI and Shopify
-openai.api_key = os.getenv('OPENAI_API_KEY')
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 shop_url = os.getenv('SHOPIFY_SHOP_URL')
 access_token = os.getenv('SHOPIFY_ACCESS_TOKEN')
 
@@ -101,12 +101,12 @@ def process_email():
             }), 400
             
         # Log the API key status (safely)
-        print("OpenAI API Key configured:", bool(openai.api_key))
+        print("OpenAI API Key configured:", bool(os.getenv('OPENAI_API_KEY')))
         print("Email body:", data['email_body'])
         
         # First, classify the email type
         try:
-            classification_response = openai.chat.completions.create(
+            classification_response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {
@@ -136,7 +136,7 @@ def process_email():
         
         # Generate response
         try:
-            response = openai.chat.completions.create(
+            response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {
