@@ -181,7 +181,12 @@ def process_email():
         })
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error processing request: {str(e)}")  # Add logging
+        return jsonify({
+            "error": f"Error processing request: {str(e)}",
+            "type": "error",
+            "response": "I apologize, but I encountered an error processing your request. Please try again."
+        }), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
