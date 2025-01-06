@@ -17,92 +17,41 @@ shopify.ShopifyResource.activate_session(session)
 
 def get_detailed_order_info(order_id):
     try:
+        print(f"Fetching order: {order_id}")  # Debug log
         order = shopify.Order.find(order_id)
+        print(f"Found order: {order.name}")  # Debug log
         
         # Basic Order Info
         order_info = {
             'order_number': order.name,
-            'customer_email': order.email,
+            'email': order.email,
             'order_date': order.created_at,
-            'status': {
-                'fulfillment_status': order.fulfillment_status or 'unfulfilled',
-                'financial_status': order.financial_status,
-                'order_status': order.status
-            },
-            'customer': {
-                'first_name': order.customer.first_name if order.customer else None,
-                'last_name': order.customer.last_name if order.customer else None,
-                'email': order.customer.email if order.customer else None
-            },
-            'shipping_address': {
-                'address1': order.shipping_address.address1 if order.shipping_address else None,
-                'address2': order.shipping_address.address2 if order.shipping_address else None,
-                'city': order.shipping_address.city if order.shipping_address else None,
-                'province': order.shipping_address.province if order.shipping_address else None,
-                'zip': order.shipping_address.zip if order.shipping_address else None,
-                'country': order.shipping_address.country if order.shipping_address else None
-            },
-            'billing_address': {
-                'address1': order.billing_address.address1 if order.billing_address else None,
-                'address2': order.billing_address.address2 if order.billing_address else None,
-                'city': order.billing_address.city if order.billing_address else None,
-                'province': order.billing_address.province if order.billing_address else None,
-                'zip': order.billing_address.zip if order.billing_address else None,
-                'country': order.billing_address.country if order.billing_address else None
-            },
-            'line_items': [],
-            'shipping_info': {
-                'method': order.shipping_lines[0].title if order.shipping_lines else None,
-                'cost': str(order.total_shipping_price_set.shop_money.amount) if order.total_shipping_price_set else '0.00'
-            },
-            'payment_info': {
-                'gateway': order.gateway,
-                'total_price': str(order.total_price),
-                'subtotal': str(order.subtotal_price),
-                'total_tax': str(order.total_tax),
-                'currency': order.currency
-            },
-            'discounts': [],
-            'notes': order.note,
-            'tags': order.tags,
-            'tracking_info': []
+            'fulfillment_status': order.fulfillment_status or 'unfulfilled',
+            'financial_status': order.financial_status,
+            'items': [],
+            'tracking': []
         }
 
         # Line Items
         for item in order.line_items:
-            line_item = {
+            order_info['items'].append({
                 'title': item.title,
                 'quantity': item.quantity,
                 'sku': item.sku,
-                'price': str(item.price),
-                'variant_title': item.variant_title,
-                'product_id': item.product_id,
-                'variant_id': item.variant_id,
-                'properties': item.properties if hasattr(item, 'properties') else None
-            }
-            order_info['line_items'].append(line_item)
+                'price': str(item.price)
+            })
 
         # Tracking Information
         if order.fulfillments:
+            print(f"Found fulfillments: {len(order.fulfillments)}")  # Debug log
             for fulfillment in order.fulfillments:
-                tracking_info = {
-                    'tracking_number': fulfillment.tracking_number,
-                    'tracking_url': fulfillment.tracking_url,
-                    'carrier': fulfillment.tracking_company,
-                    'status': fulfillment.status,
-                    'created_at': fulfillment.created_at
-                }
-                order_info['tracking_info'].append(tracking_info)
-
-        # Discounts
-        if order.discount_codes:
-            for discount in order.discount_codes:
-                discount_info = {
-                    'code': discount.code,
-                    'amount': str(discount.amount),
-                    'type': discount.type
-                }
-                order_info['discounts'].append(discount_info)
+                if fulfillment.tracking_number:
+                    order_info['tracking'].append({
+                        'number': fulfillment.tracking_number,
+                        'url': fulfillment.tracking_url,
+                        'carrier': fulfillment.tracking_company
+                    })
+                    print(f"Added tracking: {fulfillment.tracking_number}")  # Debug log
 
         return order_info
     except Exception as e:
@@ -183,27 +132,43 @@ def home():
 def process_email():
     try:
         data = request.json
-        order_details = None
-        
-        if data.get('order_id'):
-            order_details = get_detailed_order_info(data['order_id'])
+        order_info = None
         
         if not data or 'email_body' not in data:
             return jsonify({"error": "Please provide an email message."}), 400
-            
+        
+        # Fetch order details if order ID is provided
+        if data.get('order_id'):
+            print(f"Fetching order details for: {data['order_id']}")  # Debug log
+            order_info = get_detailed_order_info(data['order_id'])
+            print(f"Order info retrieved: {order_info}")  # Debug log
+
+        # Construct the system prompt
         system_prompt = """You are a helpful customer service representative for Y'all Need Jesus Co.
             Key Information:
             - We're a small business with high demand
             - Pre-orders take 13-18 business days (19-25 calendar days)
             - We're actively working to improve shipping times
             - Be friendly, professional, and understanding
-            - If it's a pre-order question, always include shipping timeframe
+            - Always include tracking information if available
             - Sign off with 'Best regards, Y'all Need Jesus Co. Customer Care'
             """
-            
-        if order_details:
-            system_prompt += f"\nOrder Details:\n{order_details}"
 
+        # Add order details to the prompt if available
+        if order_info:
+            system_prompt += "\nOrder Details:\n"
+            system_prompt += f"Order Number: {order_info['order_number']}\n"
+            system_prompt += f"Status: {order_info['fulfillment_status']}\n"
+            
+            if order_info['tracking']:
+                tracking = order_info['tracking'][0]  # Get first tracking info
+                system_prompt += f"Tracking Number: {tracking['number']}\n"
+                system_prompt += f"Carrier: {tracking['carrier']}\n"
+                system_prompt += f"Tracking URL: {tracking['url']}\n"
+            
+            print(f"Final system prompt: {system_prompt}")  # Debug log
+
+        # Generate response using OpenAI
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
