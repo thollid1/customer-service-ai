@@ -220,30 +220,39 @@ def test_order():
     """Test endpoint to verify Shopify integration."""
     try:
         # Debug information
-        print("Testing Shopify connection...")
-        print("Shop URL:", os.getenv('SHOPIFY_SHOP_URL'))
-        print("Access Token (first 5 chars):", os.getenv('SHOPIFY_ACCESS_TOKEN')[:5] if os.getenv('SHOPIFY_ACCESS_TOKEN') else "None")
-        
-        # Test Shopify connection
         shop = shopify.Shop.current()
-        print("Successfully connected to shop:", shop.name)
         
-        # Try to get order #3239
-        order = get_order_by_number('3239')
-        if order:
-            details = get_order_details(order)
-            return jsonify({
-                "status": "success", 
-                "order_details": details,
-                "shop_name": shop.name
-            })
-        else:
-            return jsonify({
-                "status": "error", 
-                "message": "Order not found",
-                "shop_name": shop.name,
-                "shop_url": os.getenv('SHOPIFY_SHOP_URL')
-            })
+        # Try multiple ways to find the order
+        test_order_numbers = ['3239', '#3239', '003239']
+        
+        for order_num in test_order_numbers:
+            try:
+                print(f"Attempting to find order with: {order_num}")
+                order = shopify.Order.find(order_num)
+                if order:
+                    details = get_order_details(order)
+                    return jsonify({
+                        "status": "success", 
+                        "order_details": details,
+                        "shop_name": shop.name,
+                        "found_with": order_num
+                    })
+            except Exception as e:
+                print(f"Failed with {order_num}: {str(e)}")
+        
+        # If we get here, no order was found
+        # Let's try to get a list of recent orders
+        orders = shopify.Order.find(limit=5)
+        recent_order_numbers = [order.name for order in orders]
+        
+        return jsonify({
+            "status": "error", 
+            "message": "Order not found",
+            "shop_name": shop.name,
+            "shop_url": os.getenv('SHOPIFY_SHOP_URL'),
+            "recent_orders": recent_order_numbers
+        })
+        
     except Exception as e:
         return jsonify({
             "status": "error", 
